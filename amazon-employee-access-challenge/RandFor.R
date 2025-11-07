@@ -1,4 +1,3 @@
-# --- LIBRARIES ---
 library(tidyverse)
 library(tidymodels)
 library(embed)
@@ -14,20 +13,19 @@ trainData <- vroom("AmazonEmployeeAccess-IsaacR/amazon-employee-access-challenge
 
 testData <- vroom("AmazonEmployeeAccess-IsaacR/amazon-employee-access-challenge/test.csv")
 
-# --- RECIPE (Enhanced Feature Engineering) ---
-my_recipe <- recipe(ACTION ~ ., data = trainData) %>%
-  step_nzv(all_predictors()) %>%                           # remove near-zero variance
-  step_other(all_nominal_predictors(), threshold = 0.001) %>%  
-  step_dummy(all_nominal_predictors()) %>%                 
-  step_interact( ~ all_numeric_predictors():all_numeric_predictors() ) %>% # add interactions
-  step_poly(all_numeric_predictors(), degree = 2) %>%      # add polynomial features
-  step_normalize(all_numeric_predictors()) %>%              # normalize numeric features
-  step_smote(ACTION, neighbors = 5)                         # balance classes with SMOTE
+# --- RECIPE ---
+my_recipe <- recipe(ACTION~., data = trainData) %>% 
+  step_mutate_at(all_numeric_predictors(), fn = factor) %>% 
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>% 
+  step_normalize(all_numeric_predictors())
 
 # --- MODEL SPEC ---
-rf_bal <- rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>%
+rf_bal <- rand_forest(
+  mtry = tune(),
+  min_n = tune(),
+  trees = 500) %>%
   set_mode("classification") %>%
-  set_engine("ranger", importance = "impurity")
+  set_engine("ranger")
 
 # --- WORKFLOW ---
 balanced_workflow <- workflow() %>%
@@ -35,23 +33,17 @@ balanced_workflow <- workflow() %>%
   add_recipe(my_recipe)
 
 # --- GRID ---
-tuning_grid <- grid_regular(
-  mtry(range = c(3, ncol(trainData) / 2)),  # slightly narrower range for stability
-  min_n(range = c(2, 10)),
-  levels = 5
-)
+tuning_grid <- grid_regular(mtry(range=c(1, 9)), min_n(), levels = 3)
 
 # --- FOLDS ---
-set.seed(123)
-folds <- vfold_cv(trainData, v = 10)
+folds <- vfold_cv(trainData, v = 10, repeats = 1)
 
 # --- TUNE ---
 cv_results <- tune_grid(
   balanced_workflow,
   resamples = folds,
   grid = tuning_grid,
-  metrics = metric_set(roc_auc),
-  control = control_grid(save_pred = TRUE)
+  metrics = metric_set(roc_auc)
 )
 
 best_tune <- cv_results %>% select_best(metric = "roc_auc")
@@ -67,4 +59,4 @@ preds <- predict(rand_for_fit, new_data = testData, type = "prob") %>%
   select(id, .pred_1) %>%
   rename(Action = .pred_1)
 
-vroom_write(preds, file = "./RandForSMOTE_PolyInteract_predictions.csv", delim = ",")
+vroom_write(preds, file = "/Users/isaacrands/Documents/Stats/Stat_348/AmazonEmployeeAccess-IsaacR/amazon-employee-access-challenge/predictions_csv/Final_predictions.csv", delim = ",")
